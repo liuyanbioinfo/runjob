@@ -364,6 +364,8 @@ class RunJob(object):
     def _list_check_sge(self, period=5, sleep=10):
         rate_limiter = RateLimiter(max_calls=1, period=period)
         time.sleep(5)
+        # record abnormal jobs, make sure the job is really killed or abnormal
+        killedjobs = {}
         while not self.finished:
             for jb in self.jobqueue.queue:
                 jobname = jb.jobname
@@ -379,9 +381,28 @@ class RunJob(object):
                             self.logger.debug(err)
                             if self.is_run and not jb.is_end and isfile(jb.stat_file+".run"):
                                 time.sleep(period)
-                                _ = self.jobstatus(jb)
-                                jb.set_kill()
-                                self.log_status(jb)
+                                # in case job done  in period seconds
+                                _stats = self.jobstatus(jb)
+                                if jobname not in killedjobs:
+                                    killedjobs[jobname] = 0
+                                killedjobs[jobname] += 1
+                                #if _stats not in ['success','run'] and not isfile(jb.stat_file+".success"):
+                                if killedjobs[jobname] >=6 and not isfile(jb.stat_file+".success"):
+                                    tim = os.popen("date").readline().strip()
+                                    print(f"{tim}:{jobname} failed %s times, %s.success file not exists" % (killedjobs[jobname], jb.stat_file), file=sys.stderr)
+                                    sys.stderr.flush()
+                                    logfile = jb.logfile
+                                    if isfile(logfile):
+                                        with os.popen('tail -n 1 %s' % logfile) as fi:
+                                            sta = fi.read().strip()
+                                            stal = sta.split()
+                                        if sta and stal[-1] == "SUCCESS":
+                                            tim = os.popen("date").readline().strip()
+                                            print(f"{tim}:{jobname} failed >=6 times, %s.success file not exists but already SUCCESS in %s" % (jb.stat_file, logfile),file=sys.stderr)
+                                            sys.stderr.flush()
+                                        else:
+                                            jb.set_kill()
+                                            self.log_status(jb)
             time.sleep(sleep)
 
     def jobcheck(self):
